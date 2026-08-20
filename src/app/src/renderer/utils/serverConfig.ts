@@ -9,8 +9,72 @@
 
 import { tauriReady } from '../tauriShim';
 
+declare global {
+  var __lemonadeClientSessionId: string | undefined;
+}
+
 type PortChangeListener = (port: number) => void;
 type UrlChangeListener = (url: string, apiKey: string) => void;
+
+const CLIENT_SESSION_ID_KEY = 'lemonade_client_session_id';
+
+function generateClientId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch {
+    // randomUUID may be absent in non-secure contexts - fall through
+  }
+  // crypto.getRandomValues is available in all contexts (unlike randomUUID,
+  // which requires a secure context). Format as a v4 UUID.
+  const bytes = new Uint8Array(16);
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      crypto.getRandomValues(bytes);
+    } else {
+      for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+    }
+  } catch {
+    for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0'));
+  return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`;
+}
+
+/**
+ * Per-tab client session ID, stable for the lifetime of the tab. Persisted in
+ * sessionStorage so reloads keep the same identity while fresh tabs get their
+ * own. Falls back to an in-memory value when storage is unavailable.
+ */
+export function getClientSessionId(): string {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      const existing = sessionStorage.getItem(CLIENT_SESSION_ID_KEY);
+      if (existing) {
+        return existing;
+      }
+      const fresh = generateClientId();
+      sessionStorage.setItem(CLIENT_SESSION_ID_KEY, fresh);
+      return fresh;
+    }
+  } catch {
+    // Storage unavailable - fall through to in-memory value
+  }
+  if (!globalThis.__lemonadeClientSessionId) {
+    globalThis.__lemonadeClientSessionId = generateClientId();
+  }
+  return globalThis.__lemonadeClientSessionId;
+}
+
+function clientHeaders(): Record<string, string> {
+  return {
+    'X-Client-Session-Id': getClientSessionId(),
+    'X-Client-App': 'lemonade-web',
+  };
+}
 
 class ServerConfig {
   private port: number = 13305;
@@ -174,9 +238,9 @@ class ServerConfig {
     }
     url.pathname = url.pathname.replace(/\/$/, '') + path;
 
-    if (query) {
-      url.search = query.toString();
-    }
+    const mergedQuery = query ? new URLSearchParams(query) : new URLSearchParams();
+    mergedQuery.set('client_session_id', getClientSessionId());
+    url.search = mergedQuery.toString();
     return url.toString();
   }
 
@@ -330,6 +394,11 @@ class ServerConfig {
         Authorization: `Bearer ${this.apiKey}`,
       }
     }
+
+    options.headers = {
+      ...clientHeaders(),
+      ...options.headers,
+    };
 
     try {
       const response = await fetch(fullUrl, options);

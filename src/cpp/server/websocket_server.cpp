@@ -427,6 +427,11 @@ void WebSocketServer::handle_connection(const std::string& connection_id, struct
     auto client_session_id_opt = get_url_arg(wsi, "client_session_id");
     std::string client_session_id = client_session_id_opt ? *client_session_id_opt : "";
 
+    char peer_name[128] = {0};
+    char peer_ip[128] = {0};
+    lws_get_peer_addresses(wsi, lws_get_socket_fd(wsi), peer_name, sizeof(peer_name), peer_ip, sizeof(peer_ip));
+    auto user_agent_opt = get_header(wsi, WSI_TOKEN_HTTP_USER_AGENT);
+
     {
         std::lock_guard<std::mutex> lock(connections_mutex_);
         connection_websockets_[connection_id] = wsi;
@@ -436,6 +441,9 @@ void WebSocketServer::handle_connection(const std::string& connection_id, struct
         state.authenticated_token_hash = telemetry::hash_token(token_str);
         state.client_session_id = client_session_id;
         state.authenticated = initial_authenticated;
+        state.remote_addr = peer_ip;
+        state.user_agent = user_agent_opt ? *user_agent_opt : "";
+        state.connected_at = std::chrono::system_clock::now();
         connection_states_[connection_id] = state;
     }
 
@@ -463,6 +471,9 @@ void WebSocketServer::handle_realtime_connection(
 
     std::lock_guard<std::mutex> lock(connections_mutex_);
     connection_states_[connection_id].realtime_session_id = session_id;
+    if (auto model = get_url_arg(wsi, "model")) {
+        connection_states_[connection_id].realtime_model = *model;
+    }
 }
 
 void WebSocketServer::handle_log_subscribe(const std::string& connection_id,
@@ -667,6 +678,33 @@ void WebSocketServer::handle_close(const std::string& connection_id) {
     }
 
     update_telemetry_listener_registration();
+}
+
+nlohmann::json WebSocketServer::get_connections_snapshot() const {
+    std::lock_guard<std::mutex> lock(connections_mutex_);
+    nlohmann::json connections = nlohmann::json::array();
+    for (const auto& [connection_id, state] : connection_states_) {
+        const char* kind_name = "unknown";
+        switch (state.kind) {
+            case ConnectionKind::realtime: kind_name = "realtime"; break;
+            case ConnectionKind::logs: kind_name = "logs"; break;
+            case ConnectionKind::spans: kind_name = "spans"; break;
+            case ConnectionKind::invalid: break;
+        }
+        connections.push_back({
+            {"connection_id", connection_id},
+            {"kind", kind_name},
+            {"client_session_id", state.client_session_id},
+            {"authenticated", state.authenticated},
+            {"remote_addr", state.remote_addr},
+            {"user_agent", state.user_agent},
+            {"model", state.realtime_model},
+            {"connected_ms", std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 state.connected_at.time_since_epoch())
+                                 .count()},
+        });
+    }
+    return connections;
 }
 
 void WebSocketServer::handle_writable(const std::string& connection_id, struct lws* wsi) {

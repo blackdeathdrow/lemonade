@@ -66,6 +66,7 @@ Router::Router(RuntimeConfig* config, ModelManager* model_manager, BackendManage
     vram_monitor_ = std::make_unique<GlobalVramMonitor>();
     eviction_engine_ = std::make_unique<EvictionEngine>(this, vram_monitor_.get());
     suspend_inhibitor_ = create_suspend_inhibitor();
+    active_sessions_ = std::make_unique<ActiveSessionTracker>();
     reclaim_executor_ = std::make_shared<RoutingHelperReclaimExecutor>(
         [this](const std::string& model_name) { reclaim_stale_helper_if_idle(model_name); });
 
@@ -91,6 +92,14 @@ Router::~Router() {
     load_cv_.notify_all();
     if (reclaim_executor_) reclaim_executor_->stop();
     unload_model("");  // Unload all
+}
+
+ActiveSessionTracker::RequestHandle Router::track_inference_request(WrappedServer* server, bool streaming) {
+    return active_sessions_->begin_request(
+        telemetry::g_current_session_key,
+        server ? server->get_model_name() : "",
+        telemetry::g_current_inference_kind,
+        streaming);
 }
 
 void Router::set_cloud_registry(CloudProviderRegistry* registry) {
@@ -1492,6 +1501,7 @@ auto Router::execute_inference(const json& request, Func&& inference_func) -> de
         }
 
         InhibitGuard inhibit_guard(suspend_inhibitor_.get(), config_->inhibit_suspend());
+        auto track_guard = track_inference_request(server, false);
 
         try {
             auto response = inference_func(server);
@@ -1606,6 +1616,7 @@ void Router::execute_streaming(const std::string& request_body, httplib::DataSin
         }
 
         InhibitGuard inhibit_guard(suspend_inhibitor_.get(), config_->inhibit_suspend());
+        auto track_guard = track_inference_request(server, true);
 
         try {
             streaming_func(server);
@@ -2016,6 +2027,8 @@ json Router::get_slots() {
         server->update_access_time();
     } // Lock released here
 
+    auto track_guard = track_inference_request(server, false);
+
     // Execute without holding lock (but busy flag prevents eviction)
     try {
         auto response = slots_server->get_slots();
@@ -2056,6 +2069,8 @@ json Router::slots_action(int slot_id, const std::string& action, const json& re
         server->update_access_time();
     } // Lock released here
 
+    auto track_guard = track_inference_request(server, false);
+
     // Execute without holding lock (but busy flag prevents eviction)
     try {
         auto response = slots_server->slots_action(slot_id, action, request_body);
@@ -2095,6 +2110,8 @@ json Router::tokenize(const json& request_body) {
         }
         server->update_access_time();
     } // Lock released here
+
+    auto track_guard = track_inference_request(server, false);
 
     // Execute without holding lock (but busy flag prevents eviction)
     try {

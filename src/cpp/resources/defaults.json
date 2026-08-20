@@ -119,6 +119,7 @@
     "rocm_bin": "builtin",
     "vulkan_bin": "builtin"
   },
+  "trusted_proxies": [],
   "vllm": {
     "args": "",
     "backend": "auto"

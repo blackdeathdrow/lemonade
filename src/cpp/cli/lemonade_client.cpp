@@ -4,6 +4,7 @@
 #include <iostream>
 #include <algorithm>
 #include <iomanip>
+#include <random>
 #include <regex>
 #include <sstream>
 #include <nlohmann/json.hpp>
@@ -103,6 +104,21 @@ std::string LemonadeClient::normalize_host(const std::string& host) const {
 }
 
 // Helper to create and configure httplib::Client (timeouts in milliseconds)
+static const std::string& cli_client_session_id() {
+    static const std::string id = [] {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<uint32_t> dist;
+        std::stringstream ss;
+        ss << "lemonade-cli-"
+           << std::hex << std::setw(8) << std::setfill('0') << dist(gen)
+           << std::setw(8) << std::setfill('0') << dist(gen)
+           << std::setw(8) << std::setfill('0') << dist(gen);
+        return ss.str();
+    }();
+    return id;
+}
+
 static httplib::Client make_client(const std::string& host, int port, const std::string& api_key, bool is_ssl,
                                     time_t connection_timeout_ms = DEFAULT_CONNECTION_TIMEOUT_MS, time_t read_timeout_ms = DEFAULT_READ_TIMEOUT_MS) {
 #ifndef LEMONADE_HTTPLIB_HAS_TLS
@@ -120,6 +136,10 @@ static httplib::Client make_client(const std::string& host, int port, const std:
     if (api_key != "") {
         cli.set_bearer_token_auth(api_key);
     }
+    cli.set_default_headers({
+        {"X-Client-Session-Id", cli_client_session_id()},
+        {"X-Client-App", "lemonade-cli"},
+    });
     return cli;
 }
 

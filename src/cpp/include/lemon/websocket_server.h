@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -94,6 +95,9 @@ public:
      * Check if a path corresponds to a valid WebSocket upgrade endpoint.
      */
     static bool is_websocket_path(const std::string& path);
+
+    // Snapshot of live WebSocket connections for the /connections endpoint.
+    json get_connections_snapshot() const;
 private:
     enum class ConnectionKind {
         invalid,
@@ -110,6 +114,10 @@ private:
         std::string authenticated_token_hash;
         std::string client_session_id;
         bool authenticated = false;
+        std::string remote_addr;
+        std::string user_agent;
+        std::string realtime_model;
+        std::chrono::system_clock::time_point connected_at;
     };
 
     int port_;
@@ -137,7 +145,7 @@ private:
     std::unordered_map<std::string, std::queue<std::string>> message_queues_;
     // Per-connection inbound reassembly buffers (libwebsockets may fragment frames)
     std::unordered_map<std::string, std::string> receive_buffers_;
-    std::mutex connections_mutex_;
+    mutable std::mutex connections_mutex_;
     bool telemetry_listener_registered_{false};
 
     // Handle new WebSocket connection

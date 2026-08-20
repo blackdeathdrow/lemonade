@@ -1369,5 +1369,13 @@ thread_local std::chrono::steady_clock::time_point g_request_start_time;
 thread_local std::string g_current_client_session_id;
 thread_local std::string g_incoming_trace_id;
 thread_local std::string g_incoming_parent_span_id;
+thread_local std::string g_current_remote_addr;
+thread_local uint16_t g_current_remote_port = 0;
+thread_local std::string g_current_user_agent;
+thread_local std::string g_current_client_app;
+thread_local std::string g_current_client_name;
+thread_local std::string g_current_session_key;
+thread_local bool g_current_authenticated = false;
+thread_local std::string g_current_inference_kind;
 
 } // namespace lemon::telemetry

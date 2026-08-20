@@ -7952,3 +7952,128 @@ input::-webkit-calendar-picker-indicator {
     color: var(--text-primary);
     margin: 0;
 }
+
+.sessions-panel.widget {
+    margin: var(--mm-stack-gap) 0 0;
+    padding: var(--mm-section-pad-y) var(--mm-section-pad-x);
+    border-radius: 0;
+    border: none;
+    background: transparent;
+    flex-shrink: 0;
+}
+
+.sessions-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.sessions-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.sessions-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.sessions-group-title {
+    font-size: 0.55rem;
+    color: var(--text-quaternary);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding-bottom: 2px;
+    border-bottom: 1px solid var(--border-3);
+}
+
+.session-entry {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 5px 6px;
+    border-radius: 5px;
+    background: var(--bg-alpha-02);
+}
+
+.session-entry-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.session-entry-name {
+    font-size: 0.72rem;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.session-badge {
+    font-size: 0.55rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.session-badge-auth {
+    color: var(--text-primary);
+    background: var(--bg-alpha-03);
+    border: 1px solid var(--border-3);
+}
+
+.session-badge-unauth {
+    color: rgba(255, 99, 71, 0.9);
+    border: 1px solid rgba(255, 99, 71, 0.4);
+    background: var(--bg-alpha-02);
+}
+
+.session-entry-detail {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-size: 0.62rem;
+    color: var(--text-quaternary);
+}
+
+.session-kind {
+    font-size: 0.55rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 0 4px;
+    border-radius: 3px;
+    border: 1px solid var(--border-3);
+}
+
+.session-kind-realtime {
+    color: rgba(130, 204, 221, 0.9);
+    border-color: rgba(130, 204, 221, 0.35);
+}
+
+.session-kind-logs {
+    color: rgba(250, 204, 21, 0.9);
+    border-color: rgba(250, 204, 21, 0.35);
+}
+
+.session-polling {
+    color: var(--text-tertiary);
+    font-style: italic;
+}
+
+.session-this-device {
+    color: rgba(130, 204, 221, 0.9);
+    font-size: 0.55rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}

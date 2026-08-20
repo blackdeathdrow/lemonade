@@ -365,6 +365,19 @@ bool RuntimeConfig::inhibit_suspend() const {
     return true;
 }
 
+std::vector<std::string> RuntimeConfig::trusted_proxies() const {
+    std::shared_lock lock(mutex_);
+    std::vector<std::string> result;
+    if (config_.contains("trusted_proxies") && config_["trusted_proxies"].is_array()) {
+        for (const auto& entry : config_["trusted_proxies"]) {
+            if (entry.is_string()) {
+                result.push_back(entry.get<std::string>());
+            }
+        }
+    }
+    return result;
+}
+
 double RuntimeConfig::auto_evict_threshold_pct() const {
     std::shared_lock lock(mutex_);
     if (config_.contains("auto_evict_threshold_pct")) {
@@ -711,6 +724,15 @@ void RuntimeConfig::validate(const std::string& key, const json& value) const {
         }
         if (value.get<double>() <= 0.0 || value.get<double>() > 1.0) {
             throw std::invalid_argument("'auto_evict_threshold_pct' must be between 0.0 and 1.0");
+        }
+    } else if (key == "trusted_proxies") {
+        if (!value.is_array()) {
+            throw std::invalid_argument("'trusted_proxies' must be an array of strings");
+        }
+        for (const auto& entry : value) {
+            if (!entry.is_string()) {
+                throw std::invalid_argument("'trusted_proxies' entries must be strings");
+            }
         }
     } else if (key == "config_version") {
         if (!value.is_number_integer()) {

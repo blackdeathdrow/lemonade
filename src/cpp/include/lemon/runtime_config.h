@@ -40,6 +40,13 @@ public:
     double auto_evict_threshold_pct() const;
     bool inhibit_suspend() const;
 
+    // Trusted reverse-proxy addresses. When a request's direct remote_addr is
+    // in this list, client identity (X-Forwarded-For / X-Real-IP) is taken from
+    // the proxy headers instead of the socket peer. Empty by default, which
+    // keeps behavior unchanged (socket peer is always used). Accepted entries
+    // are exact IPs or IPv4 CIDR ranges (e.g. "10.0.0.0/8").
+    std::vector<std::string> trusted_proxies() const;
+
     // Telemetry settings
     bool telemetry_enabled() const;
     bool telemetry_hide_inputs() const;

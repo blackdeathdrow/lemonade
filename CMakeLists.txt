@@ -983,6 +983,7 @@ set(SOURCES_CORE
     src/cpp/server/utils/version_utils.cpp
     src/cpp/server/utils/wmi_helper.cpp
     src/cpp/server/utils/network_beacon.cpp
+    src/cpp/server/utils/trusted_proxies.cpp
     src/cpp/server/utils/tcp_jsonl_client.cpp
     src/cpp/server/backends/backend_utils.cpp
     src/cpp/server/backend_manager.cpp
@@ -993,6 +994,7 @@ set(SOURCES_CORE
     src/cpp/server/streaming_audio_buffer.cpp
     src/cpp/server/vad.cpp
     src/cpp/server/realtime_session.cpp
+    src/cpp/server/active_sessions.cpp
     src/cpp/server/websocket_server.cpp
 )
 
@@ -2291,6 +2293,31 @@ if(BUILD_TESTING AND EXISTS "${_CUSTOM_ARGS_TEST_SRC}")
         ${CMAKE_CURRENT_SOURCE_DIR}/src/cpp/include
     )
     add_cpp_ci_test(CustomArgsTest CI ON COMMAND test_custom_args)
+endif()
+
+set(_ACTIVE_SESSIONS_TEST_SRC
+    "${CMAKE_CURRENT_SOURCE_DIR}/test/cpp/test_active_sessions.cpp"
+)
+if(BUILD_TESTING AND EXISTS "${_ACTIVE_SESSIONS_TEST_SRC}")
+    add_executable(test_active_sessions ${_ACTIVE_SESSIONS_TEST_SRC})
+    target_include_directories(test_active_sessions PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/cpp/include
+        ${CMAKE_CURRENT_BINARY_DIR}/include
+    )
+    target_link_libraries(test_active_sessions PRIVATE lemonade-server-core)
+    add_cpp_ci_test(ActiveSessionsTest CI ON COMMAND test_active_sessions)
+endif()
+
+set(_TRUSTED_PROXIES_TEST_SRC
+    "${CMAKE_CURRENT_SOURCE_DIR}/test/cpp/test_trusted_proxies.cpp"
+)
+if(BUILD_TESTING AND EXISTS "${_TRUSTED_PROXIES_TEST_SRC}")
+    add_executable(test_trusted_proxies ${_TRUSTED_PROXIES_TEST_SRC})
+    target_include_directories(test_trusted_proxies PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/cpp/include
+    )
+    target_link_libraries(test_trusted_proxies PRIVATE lemonade-server-core)
+    add_cpp_ci_test(TrustedProxiesTest CI ON COMMAND test_trusted_proxies)
 endif()
 
 set(_DIR_WATCHER_TEST_SRC

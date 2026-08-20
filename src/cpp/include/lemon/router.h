@@ -21,6 +21,7 @@
 #include "model_manager.h"
 #include "backend_manager.h"
 #include "runtime_config.h"
+#include "active_sessions.h"
 
 // 5 seconds is generous enough for inference to complete but prevents
 // indefinite blocking if a backend is stuck.
@@ -250,6 +251,11 @@ public:
     // Get loaded backend metadata and per-model telemetry for metrics rendering.
     json get_metrics_snapshot() const;
 
+    // Client-session tracker: presence recorded per HTTP request, in-flight
+    // inferences attributed by begin/end_request handles at the acquire sites.
+    // Owned by Router because inference attribution happens here.
+    ActiveSessionTracker& active_sessions() const { return *active_sessions_; }
+
     // Record one completed request's telemetry as a single atomic update.
     void update_request_telemetry(const std::string& model_name,
                                   const StreamingProxy::TelemetryData& telemetry);
@@ -320,10 +326,17 @@ private:
     std::unique_ptr<GlobalVramMonitor> vram_monitor_;
     std::unique_ptr<EvictionEngine> eviction_engine_;
     std::unique_ptr<SuspendInhibitor> suspend_inhibitor_;
+    std::unique_ptr<ActiveSessionTracker> active_sessions_;
     // Runs release-triggered routing-helper reclaims off the request/maintenance
     // threads. shared_ptr so a scheduled task holds a weak_ptr and no-ops if the
     // router is gone; stop()ped and joined in ~Router before state teardown.
     std::shared_ptr<RoutingHelperReclaimExecutor> reclaim_executor_;
+
+    // Record an in-flight inference for the current request's client session.
+    // Reads the client identity from telemetry thread-locals; `server` provides
+    // the model. Returns a no-op handle when no session was recorded for this
+    // request (e.g. polling paths are excluded before recording).
+    ActiveSessionTracker::RequestHandle track_inference_request(WrappedServer* server, bool streaming);
 
     // Helper methods for multi-model management
     WrappedServer* find_server_by_model_name(const std::string& model_name) const;

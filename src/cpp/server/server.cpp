@@ -24,6 +24,7 @@
 #include "lemon/utils/json_utils.h"
 #include "lemon/utils/model_name_utils.h"
 #include "lemon/utils/path_utils.h"
+#include "lemon/utils/trusted_proxies.h"
 #include "lemon/streaming_proxy.h"
 #include "lemon/logging_config.h"
 #include "lemon/thinking_controls.h"
@@ -236,6 +237,41 @@ bool is_quiet_polling_path(const std::string& path) {
            path == "/v0/system-stats" || path == "/v1/system-stats" ||
            path == "/api/v0/stats" || path == "/api/v1/stats" ||
            path == "/v0/stats" || path == "/v1/stats";
+}
+
+std::string infer_inference_kind(const std::string& path) {
+    if (path.find("/chat/completions") != std::string::npos) return "chat";
+    if (path.find("/completions") != std::string::npos) return "completion";
+    if (path.find("/embeddings") != std::string::npos) return "embeddings";
+    if (path.find("/reranking") != std::string::npos || path.find("/rerank") != std::string::npos) {
+        return "reranking";
+    }
+    if (path.find("/audio/transcriptions") != std::string::npos) return "transcription";
+    if (path.find("/audio/speech") != std::string::npos) return "tts";
+    if (path.find("/audio/generations") != std::string::npos) return "audio";
+    if (path.find("/images/generations") != std::string::npos ||
+        path.find("/images/edits") != std::string::npos ||
+        path.find("/images/variations") != std::string::npos ||
+        path.find("/images/upscale") != std::string::npos) {
+        return "image";
+    }
+    if (path.find("/3d/generations") != std::string::npos) return "image3d";
+    if (path.find("/responses") != std::string::npos) return "responses";
+    if (path.find("/classify") != std::string::npos) return "classify";
+    if (path.find("/slots") != std::string::npos) return "slots";
+    if (path.find("/tokenize") != std::string::npos) return "tokenize";
+    return "";
+}
+
+bool is_static_asset_path(const std::string& path) {
+    if (path.rfind("/static/", 0) == 0 || path.rfind("/web-app/", 0) == 0) {
+        return true;
+    }
+    const size_t last_slash = path.rfind('/');
+    const std::string last_segment =
+        (last_slash != std::string::npos) ? path.substr(last_slash + 1) : path;
+    const size_t dot_pos = last_segment.rfind('.');
+    return dot_pos != std::string::npos && last_segment.substr(dot_pos) != ".html";
 }
 
 std::string join_warnings(const std::vector<std::string>& warnings) {
@@ -869,6 +905,18 @@ httplib::Server::HandlerResponse Server::authenticate_request(const httplib::Req
         telemetry::g_current_client_session_id.clear();
     }
 
+    // Reset per-request client identity captured for the active-sessions tracker.
+    // Cleared here so a stale value never leaks across requests on a reused
+    // worker thread (same pattern as the trace-context reset below).
+    telemetry::g_current_remote_addr.clear();
+    telemetry::g_current_remote_port = 0;
+    telemetry::g_current_user_agent.clear();
+    telemetry::g_current_client_app.clear();
+    telemetry::g_current_client_name.clear();
+    telemetry::g_current_session_key.clear();
+    telemetry::g_current_authenticated = false;
+    telemetry::g_current_inference_kind.clear();
+
     // Opt-in W3C Trace Context ingestion: when enabled, adopt a valid incoming
     // "traceparent" so inference spans join the caller's distributed trace
     // instead of starting a fresh root. Cleared otherwise so a stale thread-local
@@ -882,6 +930,76 @@ httplib::Server::HandlerResponse Server::authenticate_request(const httplib::Req
             telemetry::g_incoming_trace_id = trace_id;
             telemetry::g_incoming_parent_span_id = parent_id;
         }
+    }
+
+    // Capture client identity and record the client's presence with the
+    // active-sessions tracker. Done before the auth branches below so failed
+    // authorization attempts are visible too (they never reach a handler).
+    // OPTIONS preflights, static assets, and the /connections endpoint itself
+    // are skipped so they do not pollute the list.
+    const bool is_health_or_live =
+        req.path == "/api/v0/health" || req.path == "/api/v1/health" ||
+        req.path == "/v0/health" || req.path == "/v1/health" || req.path == "/live";
+    const bool is_connections_path =
+        req.path == "/api/v0/connections" || req.path == "/api/v1/connections" ||
+        req.path == "/v0/connections" || req.path == "/v1/connections";
+
+    if (req.method != "OPTIONS" && !is_health_or_live && !is_connections_path &&
+        req.path != "/metrics" && !is_static_asset_path(req.path)) {
+        telemetry::g_current_remote_addr = req.remote_addr;
+        telemetry::g_current_remote_port = static_cast<uint16_t>(req.remote_port);
+
+        // When the direct peer is a configured trusted reverse proxy, adopt the
+        // real client identity from the proxy headers instead of the socket
+        // peer (which would be the proxy itself). X-Forwarded-For may carry a
+        // comma-separated chain; the leftmost entry is the original client.
+        // X-Forwarded-Port is optional. Headers are only honored from trusted
+        // peers so a direct client cannot forge its origin address.
+        if (utils::is_trusted_proxy(req.remote_addr, config_->trusted_proxies())) {
+            std::string xff = req.get_header_value("X-Forwarded-For");
+            if (!xff.empty()) {
+                const size_t comma = xff.find(',');
+                std::string client_ip = (comma == std::string::npos) ? xff : xff.substr(0, comma);
+                // Trim whitespace.
+                size_t start = client_ip.find_first_not_of(" \t");
+                size_t end = client_ip.find_last_not_of(" \t");
+                if (start != std::string::npos) {
+                    client_ip = client_ip.substr(start, end - start + 1);
+                    telemetry::g_current_remote_addr = client_ip;
+                    telemetry::g_current_remote_port = 0;
+                }
+            } else if (req.has_header("X-Real-IP")) {
+                std::string real_ip = req.get_header_value("X-Real-IP");
+                size_t start = real_ip.find_first_not_of(" \t");
+                size_t end = real_ip.find_last_not_of(" \t");
+                if (start != std::string::npos) {
+                    telemetry::g_current_remote_addr = real_ip.substr(start, end - start + 1);
+                    telemetry::g_current_remote_port = 0;
+                }
+            }
+            if (req.has_header("X-Forwarded-Port")) {
+                try {
+                    telemetry::g_current_remote_port =
+                        static_cast<uint16_t>(std::stoi(req.get_header_value("X-Forwarded-Port")));
+                } catch (...) {
+                    // Leave port at 0 if the header is malformed.
+                }
+            }
+        }
+
+        telemetry::g_current_user_agent = req.get_header_value("User-Agent");
+        telemetry::g_current_client_app = req.get_header_value("X-Client-App");
+        telemetry::g_current_client_name = req.get_header_value("X-Client-Name");
+        telemetry::g_current_inference_kind = infer_inference_kind(req.path);
+
+        telemetry::g_current_session_key = router_->active_sessions().record_request_presence(
+            telemetry::g_current_client_session_id,
+            telemetry::g_current_client_app,
+            telemetry::g_current_client_name,
+            telemetry::g_current_remote_addr,
+            telemetry::g_current_remote_port,
+            telemetry::g_current_user_agent,
+            is_quiet_polling_path(req.path));
     }
 
     // Check if path requires authentication (API routes and internal endpoints).
@@ -961,6 +1079,10 @@ httplib::Server::HandlerResponse Server::authenticate_request(const httplib::Req
         }
     }
 
+    telemetry::g_current_authenticated = true;
+    if (!telemetry::g_current_session_key.empty()) {
+        router_->active_sessions().set_authenticated(telemetry::g_current_session_key, true);
+    }
     return httplib::Server::HandlerResponse::Unhandled;
 }
 
@@ -1307,6 +1429,10 @@ void Server::setup_routes(httplib::Server &web_server) {
 
     register_post("log-level", [this](const httplib::Request& req, httplib::Response& res) {
         handle_log_level(req, res);
+    });
+
+    register_get("connections", [this](const httplib::Request& req, httplib::Response& res) {
+        handle_connections(req, res);
     });
 
 
@@ -1775,7 +1901,7 @@ void Server::setup_cors(httplib::Server &web_server) {
     // Set CORS headers for all responses
     web_server.set_default_headers({
         {"Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS"},
-        {"Access-Control-Allow-Headers", "Content-Type, Authorization, X-Client-Session-Id, X-Account-Session-Id, mcp-protocol-version, traceparent, Mcp-Session-Id"}
+        {"Access-Control-Allow-Headers", "Content-Type, Authorization, X-Client-Session-Id, X-Client-App, X-Client-Name, X-Account-Session-Id, mcp-protocol-version, traceparent, Mcp-Session-Id"}
     });
 
     // Handle preflight OPTIONS requests
@@ -6582,6 +6708,23 @@ void Server::handle_stats(const httplib::Request& req, httplib::Response& res) {
         nlohmann::json error = {{"error", e.what()}};
         res.set_content(error.dump(), "application/json");
     }
+}
+
+void Server::handle_connections(const httplib::Request& req, httplib::Response& res) {
+    // The list reveals remote IPs and user agents of every client, so it is
+    // gated on the admin key (which defaults to the regular key when
+    // LEMONADE_ADMIN_API_KEY is unset, and to no auth when no keys are set).
+    if (!admin_api_key_.empty() && telemetry::g_current_auth_token != admin_api_key_) {
+        res.status = 401;
+        res.set_content("{\"error\": \"Invalid or missing admin API key\"}", "application/json");
+        return;
+    }
+
+    nlohmann::json response;
+    response["sessions"] = router_->active_sessions().snapshot_json();
+    response["websockets"] =
+        websocket_server_ ? websocket_server_->get_connections_snapshot() : nlohmann::json::array();
+    res.set_content(response.dump(), "application/json");
 }
 
 void Server::handle_metrics(const httplib::Request& req, httplib::Response& res) {
