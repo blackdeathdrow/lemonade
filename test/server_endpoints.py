@@ -7959,9 +7959,10 @@ class EndpointTests(ServerTestBase):
                 pass
 
     def test_056_download_rate_limit_config(self):
-        """download_rate_limit is a string cap that validates and round-trips
-        via /internal/set. Spawns its own lemond so it does not depend on an
-        externally-managed server (unlike the shared-server assumption of
+        """download_rate_limit is a string cap; download_rate_limit_options is a
+        list of tray submenu options; both validate and round-trip via
+        /internal/set independently. Spawns its own lemond so it does not depend
+        on an externally-managed server (unlike the shared-server assumption of
         ServerTestBase)."""
         with _running_lemond(cache_prefix="lemond_ratecfg_") as (
             proc,
@@ -7982,6 +7983,12 @@ class EndpointTests(ServerTestBase):
                 {"download_rate_limit": "10M5"},  # malformed rate string
                 {"download_rate_limit": -5},  # non-string / negative
                 {"download_rate_limit": "abc"},  # invalid rate string
+                {"download_rate_limit_options": "notarray"},  # options not an array
+                {"download_rate_limit_options": ["10M5"]},  # malformed option
+                {"download_rate_limit_options": [123]},  # non-string option
+                {"download_rate_limit_options": ["10M", "bad"]},  # one malformed option
+                {"download_rate_limit_options": ["0"]},  # zero-rate option
+                {"download_rate_limit_options": [""]},  # empty option
             ]
             for body in bad_changes:
                 resp = requests.post(
@@ -8000,7 +8007,10 @@ class EndpointTests(ServerTestBase):
             resp = requests.post(
                 set_url,
                 headers=headers,
-                json={"download_rate_limit": "10M"},
+                json={
+                    "download_rate_limit": "10M",
+                    "download_rate_limit_options": ["10M", "50M", "100M"],
+                },
                 timeout=TIMEOUT_DEFAULT,
             )
             self.assertEqual(
@@ -8010,8 +8020,9 @@ class EndpointTests(ServerTestBase):
                 config_url, headers=headers, timeout=TIMEOUT_DEFAULT
             ).json()
             self.assertEqual(cfg["download_rate_limit"], "10M")
+            self.assertEqual(cfg["download_rate_limit_options"], ["10M", "50M", "100M"])
 
-            # A partial update preserves unrelated keys.
+            # A partial default update preserves the configured options.
             resp = requests.post(
                 set_url,
                 headers=headers,
@@ -8025,8 +8036,25 @@ class EndpointTests(ServerTestBase):
                 config_url, headers=headers, timeout=TIMEOUT_DEFAULT
             ).json()
             self.assertEqual(cfg["download_rate_limit"], "20M")
+            self.assertEqual(cfg["download_rate_limit_options"], ["10M", "50M", "100M"])
 
-            # Clearing the cap means runtime unlimited.
+            # A partial options update preserves the active cap.
+            resp = requests.post(
+                set_url,
+                headers=headers,
+                json={"download_rate_limit_options": ["25M", "100M"]},
+                timeout=TIMEOUT_DEFAULT,
+            )
+            self.assertEqual(
+                resp.status_code, 200, f"/internal/set failed: {resp.text}"
+            )
+            cfg = requests.get(
+                config_url, headers=headers, timeout=TIMEOUT_DEFAULT
+            ).json()
+            self.assertEqual(cfg["download_rate_limit"], "20M")
+            self.assertEqual(cfg["download_rate_limit_options"], ["25M", "100M"])
+
+            # Clearing the default (runtime unlimited) keeps the options.
             resp = requests.post(
                 set_url,
                 headers=headers,
@@ -8040,6 +8068,7 @@ class EndpointTests(ServerTestBase):
                 config_url, headers=headers, timeout=TIMEOUT_DEFAULT
             ).json()
             self.assertEqual(cfg["download_rate_limit"], "")
+            self.assertEqual(cfg["download_rate_limit_options"], ["25M", "100M"])
 
             print(
                 "[OK] download_rate_limit validates and round-trips via /internal/set"
@@ -8075,10 +8104,15 @@ class EndpointTests(ServerTestBase):
             )
 
     def test_058_download_rate_limit_runtime_vs_persisted(self):
-        """A rate can be selected at runtime via /api/v1/params (like Context
-        Size); only /internal/set persists it to config.json."""
+        """The tray selects a rate via /api/v1/params (runtime only, like
+        Context Size); only /internal/set persists it to config.json. The
+        active cap (download_rate_limit) and the submenu options
+        (download_rate_limit_options) are independent."""
         with _running_lemond(
-            config={"download_rate_limit": "10M"},
+            config={
+                "download_rate_limit": "10M",
+                "download_rate_limit_options": ["10M", "50M", "100M"],
+            },
             cache_prefix="lemond_ratecfg_",
         ) as (proc, port, headers, log_path):
             config_path = os.path.join(os.path.dirname(log_path), "config.json")
@@ -8095,9 +8129,12 @@ class EndpointTests(ServerTestBase):
                 config_url, headers=headers, timeout=TIMEOUT_DEFAULT
             ).json()
             self.assertEqual(cfg.get("download_rate_limit"), "10M")
+            self.assertEqual(
+                cfg.get("download_rate_limit_options"), ["10M", "50M", "100M"]
+            )
 
-            # A runtime change via /api/v1/params updates the snapshot while
-            # config.json on disk stays untouched.
+            # The tray selects a rate at runtime via /api/v1/params; the
+            # configured options are preserved and config.json on disk is untouched.
             resp = requests.post(
                 params_url,
                 headers=headers,
@@ -8109,6 +8146,9 @@ class EndpointTests(ServerTestBase):
                 config_url, headers=headers, timeout=TIMEOUT_DEFAULT
             ).json()
             self.assertEqual(cfg.get("download_rate_limit"), "50M")
+            self.assertEqual(
+                cfg.get("download_rate_limit_options"), ["10M", "50M", "100M"]
+            )
             with open(config_path, "r", encoding="utf-8") as f:
                 self.assertEqual(json.load(f)["download_rate_limit"], "10M")
 
