@@ -34,19 +34,19 @@ const SIZE_TOKEN = String.raw`(\d+\.?\d*B(?:-A\d+\.?\d*B)?)`;
 const FLM_SIZE_TOKEN = String.raw`(\d+\.?\d*[bm])`;
 
 function buildFamilyRegex(prefix: string, suffix = '-GGUF$'): RegExp {
-  return new RegExp(`^${prefix}-${SIZE_TOKEN}${suffix}`);
+  return new RegExp(`^${prefix}-${SIZE_TOKEN}${suffix}`, 'i');
 }
 
 function buildRecipePrefixFamilyRegex(prefix: string): RegExp {
-  return new RegExp(`^${prefix}-${SIZE_TOKEN}(?:$|[-_.])`);
+  return new RegExp(`^${prefix}-${SIZE_TOKEN}(?:$|[-_.])`, 'i');
 }
 
 function buildRecipeRemainderFamilyRegex(prefix: string): RegExp {
-  return new RegExp(`^${prefix}-(.+)`);
+  return new RegExp(`^${prefix}-(.+)`, 'i');
 }
 
 function buildFlmFamilyRegex(prefix: string): RegExp {
-  return new RegExp(`^${prefix}-${FLM_SIZE_TOKEN}-FLM$`);
+  return new RegExp(`^${prefix}-${FLM_SIZE_TOKEN}-FLM$`, 'i');
 }
 
 const MODEL_FAMILIES: ModelFamily[] = [
@@ -103,7 +103,7 @@ const MODEL_FAMILIES: ModelFamily[] = [
   },
   {
     displayName: 'gpt-oss',
-    regex: /^gpt-oss-(\d+\.?\d*b)-mxfp4?-GGUF$/,
+    regex: /^gpt-oss-(\d+\.?\d*b)-mxfp4?-gguf$/i,
   },
   {
     displayName: 'LFM2',
@@ -286,10 +286,10 @@ const stripSourceSuffix = (label: string): string => {
 const getFamilyMemberLabel = (modelName: string, family: ModelFamily): string => {
   const prefixInfo = CANONICAL_PREFIXES.find(p => modelName.startsWith(p.prefix));
   const bare = stripCanonicalPrefix(modelName);
-  const relativeName = bare.startsWith(family.displayName)
+  const relativeName = bare.toLowerCase().startsWith(family.displayName.toLowerCase())
     ? bare.slice(family.displayName.length).replace(/^[-_.]/, '')
     : bare;
-  const label = relativeName.endsWith('-GGUF') ? relativeName.slice(0, -'-GGUF'.length) : relativeName;
+  const label = /-gguf$/i.test(relativeName) ? relativeName.slice(0, -5) : relativeName;
   // Keep the source suffix on collapsed family rows so shadowed sources stay distinguishable.
   return label + (prefixInfo?.suffix ?? '');
 };
